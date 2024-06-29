@@ -1,0 +1,6 @@
+env/
+.env
+firebaseConfig.json
+
+.DS_Store
+openVNU/__pycache__/settings.cpython-311.pyc
