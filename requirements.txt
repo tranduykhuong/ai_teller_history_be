@@ -75,3 +75,4 @@ uritemplate==4.1.1
 urllib3==2.2.1
 openai==1.35.7
 soundfile==0.12.1
+sentry-sdk
