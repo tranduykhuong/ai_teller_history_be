@@ -8,7 +8,6 @@ from story.models import SystemSettings
 
 def get_token(key):
     obj = SystemSettings.objects.filter(key=key).first()
-    print(obj)
 
     if obj:
         return obj.value

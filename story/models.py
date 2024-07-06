@@ -74,6 +74,11 @@ class GeneratedStory(models.Model):
         blank=True,
     )
 
+    is_publish = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f'{self.story} - {self.object} - {self.purpose} - {self.style}'
+
 
 class StoryImages(models.Model):
     class Meta:
@@ -91,6 +96,9 @@ class StoryImages(models.Model):
     url = models.CharField(max_length=255)
     description = models.CharField(max_length=255, default="")
 
+    def __str__(self):
+        return f'{self.story} - {self.url}'
+
 
 class SystemSettings(models.Model):
     class Meta:
@@ -100,3 +108,6 @@ class SystemSettings(models.Model):
 
     key = models.CharField(max_length=100)
     value = models.CharField(max_length=500)
+
+    def __str__(self):
+        return self.key

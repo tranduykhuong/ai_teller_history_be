@@ -10,13 +10,15 @@ import requests
 import json
 from story import utils
 import time
+import random
+from collections import Counter
 
-def define_story_by_search_openai(text_search, list_story):
+def define_story_by_search_openai(text_search, object, purpose, style, list_story):
     client = OpenAI(
         api_key=utils.get_token('OPEN_KEY'),
     )
 
-    prompt = f"Người dùng đang tìm kiếm một câu chuyện lịch sử bằng cách search: {text_search}. Với danh sách các câu chuyện sau: {list_story} và những hiểu biết của bạn. Hãy đề xuất 1 câu chuyện phù hợp trong danh sách trên. Kết quả trả về là một ID (interger) duy nhất (Vui lòng không xin lỗi, không cảm ơn, không mô tả...)."
+    prompt = f"Người dùng là {object} đang tìm kiếm một câu chuyện lịch sử bằng cách search: {text_search}, nhằm mục đích {purpose} với phong cách {style}. Với danh sách các câu chuyện sau: {list_story} và những hiểu biết của bạn. Hãy đề xuất 1 câu chuyện phù hợp trong danh sách trên. Kết quả trả về là một ID (interger) duy nhất (Vui lòng không xin lỗi, không cảm ơn, không mô tả...)."
 
     chat_completion = client.chat.completions.create(
         messages=[
@@ -30,12 +32,50 @@ def define_story_by_search_openai(text_search, list_story):
     message_content = chat_completion.choices[0].message.content
     return message_content
 
+def define_story_by_matrix(text_search, object, purpose, style, list_story):
+    text_search = text_search.lower()
+    object = object.lower()
+    purpose = purpose.lower()
+    style = style.lower()
+
+    scores = []
+
+    text_search_words = Counter(text_search.split())
+    object_words = Counter(object.split())
+    purpose_words = Counter(purpose.split())
+    style_words = Counter(style.split())
+
+    for story in list_story:
+        id, title, author, year, story_object, story_style, story_purpose = story
+
+        title = title.lower()
+        story_object = story_object.lower()
+        story_style = story_style.lower()
+        story_purpose = story_purpose.lower()
+
+        title_words = Counter(title.split())
+        story_object_words = Counter(story_object.split())
+        story_style_words = Counter(story_style.split())
+        story_purpose_words = Counter(story_purpose.split())
+
+        score = 0
+        score += sum((text_search_words & title_words).values())
+        score += sum((object_words & story_object_words).values())
+        score += sum((purpose_words & story_purpose_words).values())
+        score += sum((style_words & story_style_words).values())
+
+        scores.append((score, story))
+
+    best_match = max(scores, key=lambda x: x[0])
+
+    return best_match[1][0]
+
 def generate_story_openai(object, style, purpose, prev_session, cur_session):
     client = OpenAI(
         api_key=utils.get_token('OPEN_KEY'),
     )
 
-    prompt = f"Tôi đang thuyết minh lịch sử cho {object} với phong cách kể {style} nhằm mục đích {purpose}. {'Nối tiếp phần sau của câu chuyện: {prev_session}, hãy' if prev_session else 'Hãy'} giúp tôi viết 1 đoạn thuyết minh ngắn gọn (không quá 100 từ) nhưng đầy đủ theo cốt chuyện lịch sử sau (giữ nguyên các mốc lịch sử: năm, thế kỷ, giai đoạn..., không viết tắt): {cur_session}. Kết quả trả về chỉ là đoạn văn bản thuyết minh."
+    prompt = f"Tôi đang thuyết minh lịch sử cho {object} với phong cách kể {style} nhằm mục đích {purpose}. {'Nối tiếp phần sau của câu chuyện: {prev_session}, hãy' if prev_session else 'Hãy'} giúp tôi viết 1 đoạn thuyết minh ngắn gọn (không quá 100 từ) nhưng đầy đủ theo cốt chuyện lịch sử (giữ nguyên các mốc lịch sử: năm, thế kỷ, giai đoạn..., không viết tắt, không tự sáng tạo các sự kiện khác) theo mô tả sau: {cur_session}. Kết quả trả về chỉ là đoạn văn bản thuyết minh."
 
     chat_completion = client.chat.completions.create(
         messages=[
@@ -116,7 +156,7 @@ def text_to_speech(text):
     headers = {
         'api-key': utils.get_token('FPTAI_KEY'),
         'speed': '',
-        'voice': os.getenv('FPTAI_VOICE')
+        'voice': utils.get_token('FPTAI_VOICE')
     }
 
     response = requests.request(
@@ -164,7 +204,13 @@ class StoryApi(ViewSet):
         purpose = request.data['purpose']
 
         stories = Story.objects.all().values_list('id', 'title', 'historical_figures', 'period')
-        id = int(define_story_by_search_openai(text_search=text_search, list_story=stories))
+        id = int(define_story_by_search_openai(
+            text_search=text_search,
+            object=object,
+            purpose=purpose,
+            style=style,
+            list_story=stories
+            ))
 
         story = Story.objects.filter(pk=id).first()
         related_images = story.story_imgs.all().values_list("url", "description")
@@ -178,13 +224,17 @@ class StoryApi(ViewSet):
             story_paragraphs = story.content.split('\n')
 
             for paragraph in story_paragraphs:
+                img_idx = "R"
                 img_idx = pick_img_openai(paragraph, story_images_list)
-                print(img_idx)
-                img_url = story_images_list[int(img_idx)][0]
+                try:
+                    img_idx = int(img_idx)
+                except:
+                    img_idx = random.randint(0, len(story_images_list) - 1)
 
-                story_images_list.pop(int(img_idx))
+                img_url = story_images_list[img_idx][0]
+
+                story_images_list.pop(img_idx)
                 img_list.append(img_url)
-                print(img_url)
 
                 text = generate_story_openai(
                     object=object,
@@ -193,6 +243,7 @@ class StoryApi(ViewSet):
                     prev_session=data[-1]['text'] if len(data) else None,
                     cur_session=paragraph
                 )
+                text = text.replace('Thảo', 'Tháo')
 
                 fpt_url = json.loads(text_to_speech(text))['async']
 
@@ -280,14 +331,49 @@ class StoryApi(ViewSet):
         object = request.data['object']
         style = request.data['style']
         purpose = request.data['purpose']
+        id='R'
 
-        stories = Story.objects.all().values_list('id', 'title', 'historical_figures', 'period')
-        id = int(define_story_by_search_openai(text_search=text_search, list_story=stories))
+        stories = GeneratedStory.objects.filter(is_publish=True).values_list('id', 'story__title', 'story__historical_figures', 'story__period', 'object', 'style', 'purpose')
 
-        story = GeneratedStory.objects.filter(story=id).last()
+        try:
+            id = int(define_story_by_search_openai(
+                text_search=text_search,
+                object=object,
+                purpose=purpose,
+                style=style,
+                list_story=stories
+            ))
+            id = int(id)
+            print('Define by GPT: ', id)
+        except:
+            id = int(define_story_by_matrix(
+                text_search=text_search,
+                object=object,
+                purpose=purpose,
+                style=style,
+                list_story=stories
+            ))
+            print('Define by Matrix: ', id)
+
+        generated_story = GeneratedStory.objects.filter(pk=id).last()
+
+        story = Story.objects.filter(pk=generated_story.story.id).first()
+        related_images = story.story_imgs.all().values_list("url", "description")
+        story_images_list = list(related_images)
+
+        data = generated_story.data
+
+        imgs = utils.shuffle_array(story_images_list)
+        imgs = imgs[:len(data['content'])]
+        imgs = [url for url, _ in imgs]
+
+        data['imgs'] = imgs
+
+        for idx, url in enumerate(imgs):
+            data['content'][idx]['img_url'] = url
 
         return Response(
-            data=story.data,
+            data=data,
             status=status.HTTP_200_OK,
         )
 
@@ -299,7 +385,7 @@ class StoryApi(ViewSet):
     )
     @try_except_wrapper
     def get_all(self, request):
-        generated_stories = GeneratedStory.objects.all()
+        generated_stories = GeneratedStory.objects.filter(is_publish=True)
 
         data = []
 
