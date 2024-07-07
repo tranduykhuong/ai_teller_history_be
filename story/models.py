@@ -75,9 +75,10 @@ class GeneratedStory(models.Model):
     )
 
     is_publish = models.BooleanField(default=True)
+    narrator = models.IntegerField(default=3)
 
     def __str__(self):
-        return f'{self.story} - {self.object} - {self.purpose} - {self.style}'
+        return f'{self.story} - {self.narrator} - {self.object} - {self.style} - {self.purpose}'
 
 
 class StoryImages(models.Model):
@@ -95,6 +96,8 @@ class StoryImages(models.Model):
 
     url = models.CharField(max_length=255)
     description = models.CharField(max_length=255, default="")
+
+    is_publish = models.BooleanField(default=True)
 
     def __str__(self):
         return f'{self.story} - {self.url}'

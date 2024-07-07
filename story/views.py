@@ -89,6 +89,25 @@ def generate_story_openai(object, style, purpose, prev_session, cur_session):
     message_content = chat_completion.choices[0].message.content
     return message_content
 
+def generate_story_openai_with_narrator(object, style, purpose, prev_session, cur_session, narrator):
+    client = OpenAI(
+        api_key=utils.get_token('OPEN_KEY'),
+    )
+
+    prompt = f"Hãy đóng vai là {narrator} để kể lại trận chiến của chính {narrator} nhằm cung cấp thông tin lịch sử cho {object} với phong cách kể {style} với mục đích {purpose}. {'Nối tiếp phần sau của câu chuyện: {prev_session}, hãy' if prev_session else 'Hãy'} giúp tôi viết 1 đoạn kể chuyện ngắn gọn (không quá 100 từ) nhưng đầy đủ theo cốt chuyện lịch sử (giữ nguyên các mốc lịch sử: năm, thế kỷ, giai đoạn..., không viết tắt, không tự sáng tạo các sự kiện khác) theo mô tả sau: {cur_session}. Kết quả trả về chỉ là đoạn văn bản ở ngôi kể thứ nhất."
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": prompt,
+            }
+        ],
+        model="gpt-3.5-turbo",
+    )
+    message_content = chat_completion.choices[0].message.content
+    return message_content
+
 def create_questionaire_openai(content, prev_questions = None):
     client = OpenAI(
         api_key=utils.get_token('OPEN_KEY'),
@@ -319,6 +338,144 @@ class StoryApi(ViewSet):
             status=status.HTTP_200_OK,
         )
 
+
+    @action(
+        detail=False,
+        methods=["POST"],
+        url_path="generate-narrator",
+        url_name="generate-narrator",
+    )
+    @try_except_wrapper
+    def generate_narrator(self, request):
+        text_search = request.data['text_search']
+        object = request.data['object']
+        style = request.data['style']
+        purpose = request.data['purpose']
+
+        stories = Story.objects.all().values_list('id', 'title', 'historical_figures', 'period')
+        id = int(define_story_by_search_openai(
+            text_search=text_search,
+            object=object,
+            purpose=purpose,
+            style=style,
+            list_story=stories
+            ))
+
+        story = Story.objects.filter(pk=id).first()
+        related_images = story.story_imgs.filter(is_publish=True).values_list("url", "description")
+        story_images_list = list(related_images)
+
+        img_list = []
+        questionaire = []
+
+        if story:
+            data = []
+
+            story_paragraphs = story.content.split('\n')
+
+            for paragraph in story_paragraphs:
+                img_idx = "R"
+                img_idx = pick_img_openai(paragraph, story_images_list)
+                try:
+                    img_idx = int(img_idx)
+                except:
+                    img_idx = random.randint(0, len(story_images_list) - 1)
+
+                img_url = story_images_list[img_idx][0]
+
+                story_images_list.pop(img_idx)
+                img_list.append(img_url)
+
+                text = generate_story_openai_with_narrator(
+                    object=object,
+                    style=style,
+                    purpose=purpose,
+                    prev_session=data[-1]['text'] if len(data) else None,
+                    cur_session=paragraph,
+                    narrator=story.historical_figures
+                )
+                text = text.replace('Thảo', 'Tháo')
+
+                print(text)
+                fpt_url = json.loads(text_to_speech(text))['async']
+
+                while True:
+                    response = requests.get(fpt_url)
+                    if response.status_code == 200:
+                        break
+                    print("Pulling...")
+                    time.sleep(3)
+
+                voice_url = utils.upload_file(
+                    id,
+                    fpt_url
+                )
+
+                duration = utils.fetch_and_check_audio_length(fpt_url)
+
+                item = {
+                    "text": text,
+                    "voice_url": voice_url,
+                    "fpt_url": fpt_url,
+                    "img_url": img_url,
+                    "duration": duration,
+                    "start_time": data[-1]['end_time'] if len(data) else 0,
+                    "end_time": data[-1]['end_time'] + duration if len(data) else duration,
+                }
+
+                data.append(item)
+
+                # CREATE QUESTIONAIRE
+                prev_questions = ''
+                for idx in range(2):
+                    data_question = create_questionaire_openai(
+                        paragraph,
+                        prev_questions
+                    )
+
+                    data_question = json.loads(data_question)
+
+                    prev_questions += data_question['question']
+                    if idx == 0:
+                        data_question['start_time'] = data[-1]['end_time'] if len(data) else 0
+                    else:
+                        data_question['start_time'] = (data[-1]['end_time'] if len(data) else 0) + 5
+                    questionaire.append(data_question)
+
+
+            context = genarate_new_text_openai(story.context, style, object, purpose)
+            historical_significance = genarate_new_text_openai(story.historical_significance, style, object, purpose)
+            main_happenings = genarate_new_text_openai(story.main_happenings, style, object, purpose)
+            result = genarate_new_text_openai(story.result, style, object, purpose)
+
+            data_object = {
+                "content": data,
+                "imgs": img_list,
+                "questionaire": questionaire,
+                "summary": {
+                    "context": context,
+                    "historical_significance": historical_significance,
+                    "main_happenings": main_happenings,
+                    "result": result,
+                }
+            }
+
+            generated_story = GeneratedStory.objects.create(
+                story=story,
+                object=object,
+                style=style,
+                purpose=purpose,
+                data=data_object,
+                narrator=1
+            )
+            generated_story.save()
+
+        return Response(
+            data=data_object,
+            status=status.HTTP_200_OK,
+        )
+
+
     @action(
         detail=False,
         methods=["POST"],
@@ -358,12 +515,14 @@ class StoryApi(ViewSet):
         generated_story = GeneratedStory.objects.filter(pk=id).last()
 
         story = Story.objects.filter(pk=generated_story.story.id).first()
-        related_images = story.story_imgs.all().values_list("url", "description")
+        related_images = story.story_imgs.filter(is_publish=True).values_list("url", "description")
         story_images_list = list(related_images)
 
         data = generated_story.data
 
         imgs = utils.shuffle_array(story_images_list)
+        imgs.append(imgs[0])
+        imgs.append(imgs[1])
         imgs = imgs[:len(data['content'])]
         imgs = [url for url, _ in imgs]
 

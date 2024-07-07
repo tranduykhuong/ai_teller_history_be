@@ -19,7 +19,15 @@ class StoryForm(forms.ModelForm):
 class StoryAdmin(admin.ModelAdmin):
     form = StoryForm
 
+class StoryImagesAdmin(admin.ModelAdmin):
+    list_display = ('id', 'story', 'url', 'is_publish')
+    ordering = ('id',)
+
+class GeneratedStoryAdmin(admin.ModelAdmin):
+    list_display = ('id', 'story', 'is_publish')
+    ordering = ('-id',)
+
 admin.site.register(Story, StoryAdmin)
-admin.site.register(GeneratedStory)
-admin.site.register(StoryImages)
+admin.site.register(GeneratedStory, GeneratedStoryAdmin)
+admin.site.register(StoryImages, StoryImagesAdmin)
 admin.site.register(SystemSettings)
