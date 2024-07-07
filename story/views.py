@@ -32,6 +32,25 @@ def define_story_by_search_openai(text_search, object, purpose, style, list_stor
     message_content = chat_completion.choices[0].message.content
     return message_content
 
+def define_story_by_search_openai_or_none(text_search, object, purpose, style, list_story):
+    client = OpenAI(
+        api_key=utils.get_token('OPEN_KEY'),
+    )
+
+    prompt = f"Người dùng là {object} đang tìm kiếm một câu chuyện lịch sử bằng cách search: {text_search}, nhằm mục đích {purpose} với phong cách {style}. Với danh sách các câu chuyện sau: {list_story} và những hiểu biết của bạn. Hãy đề xuất 1 câu chuyện phù hợp trong danh sách trên (Nếu không tồn tại câu chuyện có tiêu đề phù hợp và đúng ý nghĩa 99% với câu search {text_search}, hãy trả về NO.). Kết quả trả về là một ID (interger) duy nhất (Vui lòng không xin lỗi, không cảm ơn, không mô tả...)."
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": prompt,
+            }
+        ],
+        model="gpt-3.5-turbo",
+    )
+    message_content = chat_completion.choices[0].message.content
+    return message_content
+
 def define_story_by_matrix(text_search, object, purpose, style, list_story):
     text_search = text_search.lower()
     object = object.lower()
@@ -493,16 +512,23 @@ class StoryApi(ViewSet):
         stories = GeneratedStory.objects.filter(is_publish=True).values_list('id', 'story__title', 'story__historical_figures', 'story__period', 'object', 'style', 'purpose')
 
         try:
-            id = int(define_story_by_search_openai(
+            id = define_story_by_search_openai_or_none(
                 text_search=text_search,
                 object=object,
                 purpose=purpose,
                 style=style,
                 list_story=stories
-            ))
-            id = int(id)
+            )
+
             print('Define by GPT: ', id)
-        except:
+            if id == 'NO' or id == 'NO.':
+                return Response(
+                    data={"msg": "NOT FOUND"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            id = int(id)
+        except Exception as e:
             id = int(define_story_by_matrix(
                 text_search=text_search,
                 object=object,
